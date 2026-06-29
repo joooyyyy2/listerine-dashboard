@@ -17,7 +17,7 @@ const PASSWORD = "listerine2026";
 const SHEET_ID  = "1H-H1WOt2TVIoxrCxcrU7QdvGqYqSIleYDDOJLfRcArs";
 const API_KEY   = "AIzaSyDVCQe8bXekdKDbSA_ppbCArWxXrWbeg2U";
 const SHEET_NAME = "Data";
-const RANGE     = `${SHEET_NAME}!B2:S48`; // B열(NO) ~ S열(CPV), 2행(헤더) ~ 48행
+const RANGE     = `${SHEET_NAME}!B2:T50`; // B열(NO) ~ S열(CPV), 2행(헤더) ~ 48행
 
 // ── 구글 시트 데이터 → 앱 데이터로 변환
 function parseSheetRow(row, index) {
