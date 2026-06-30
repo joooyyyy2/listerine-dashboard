@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import {
-  LineChart, Line, BarChart, Bar,
+  LineChart, Line, BarChart, Bar, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer
 } from "recharts";
@@ -16,8 +16,8 @@ const PASSWORD = "listerine2026";
 // ────────────────────────────────────────────
 const SHEET_ID  = "1H-H1WOt2TVIoxrCxcrU7QdvGqYqSIleYDDOJLfRcArs";
 const API_KEY   = "AIzaSyDVCQe8bXekdKDbSA_ppbCArWxXrWbeg2U";
-const SHEET_NAME = "Data";
-const RANGE     = `${SHEET_NAME}!B2:T50`; // B열(NO) ~ S열(CPV), 2행(헤더) ~ 48행
+const SHEET_NAME = "Data"; // 실제 구글 시트 탭 이름과 정확히 일치해야 함
+const RANGE     = `${SHEET_NAME}!B2:S48`; // B열(NO) ~ S열(CPV), 2행(헤더) ~ 48행
 
 // ── 구글 시트 데이터 → 앱 데이터로 변환
 function parseSheetRow(row, index) {
@@ -195,47 +195,88 @@ function LoginPage({ onLogin }) {
 // ────────────────────────────────────────────
 // 📊  PAGE 1 : 광고 성과 추이
 // ────────────────────────────────────────────
+function getYear(d) {
+  if (!d) return "";
+  const parts = d.split(".");
+  return parts.length ? `20${parts[0]}` : d;
+}
+
 function TrendPage({ data }) {
+  const [basis, setBasis] = useState("month"); // month | year | product
+
   const totalViews  = data.reduce((s,r) => s + (r.views||0), 0);
   const avgCPV      = data.length ? data.reduce((s,r) => s + (r.cpv||0), 0) / data.length : 0;
   const avgER       = data.length ? data.reduce((s,r) => s + (r.er||0),  0) / data.length : 0;
   const totalBudget = data.reduce((s,r) => s + (r.amount||0), 0);
 
-  const monthlyMap = {};
-  data.forEach(r => {
-    const ym = getYM(r.date);
-    if (!ym) return;
-    if (!monthlyMap[ym]) monthlyMap[ym] = { ym, views:0, cpvSum:0, erSum:0, count:0, budget:0 };
-    monthlyMap[ym].views   += (r.views||0);
-    monthlyMap[ym].cpvSum  += (r.cpv||0);
-    monthlyMap[ym].erSum   += (r.er||0);
-    monthlyMap[ym].count   += 1;
-    monthlyMap[ym].budget  += (r.amount||0);
-  });
-  const monthly = Object.values(monthlyMap)
-    .sort((a,b) => a.ym.localeCompare(b.ym))
-    .map(d => ({
-      month: d.ym.slice(2),
+  // ── 기준별 그룹핑 (월별 / 연도별 / 제품별)
+  const grouped = useMemo(() => {
+    const map = {};
+    data.forEach(r => {
+      let key;
+      if (basis === "month")        key = getYM(r.date);
+      else if (basis === "year")    key = getYear(r.date);
+      else /* product */ {
+        // 제품이 복수(TCC/TCM 등)인 경우 첫 번째 제품으로 귀속
+        key = (r.product || "기타").split("/")[0];
+      }
+      if (!key) return;
+      if (!map[key]) map[key] = { key, views:0, cpvSum:0, erSum:0, count:0, budget:0 };
+      map[key].views  += (r.views||0);
+      map[key].cpvSum += (r.cpv||0);
+      map[key].erSum  += (r.er||0);
+      map[key].count  += 1;
+      map[key].budget += (r.amount||0);
+    });
+    let arr = Object.values(map);
+    if (basis === "product") {
+      const order = ["TCC","TCM","TCP"];
+      arr.sort((a,b) => order.indexOf(a.key) - order.indexOf(b.key));
+    } else {
+      arr.sort((a,b) => a.key.localeCompare(b.key));
+    }
+    return arr.map(d => ({
+      label: basis === "month" ? d.key.slice(2) : d.key,
       "조회수(만)": Math.round(d.views/10000),
       CPV: Math.round(d.cpvSum/d.count),
       "ER(%)": parseFloat((d.erSum/d.count*100).toFixed(2)),
       "예산(만)": Math.round(d.budget/10000),
     }));
+  }, [data, basis]);
+
+  const BASIS_OPTS = [
+    { id:"month",   label:"월별" },
+    { id:"year",    label:"연도별" },
+    { id:"product", label:"제품별" },
+  ];
+
+  // 제품별 보기일 때 막대 색상 (TCC는 파란색으로 구분)
+  const PRODUCT_BAR_COLOR = { TCC:"#0EA5E9", TCM:C.accent, TCP:"#F59E0B" };
+  const barColorFor = (label) => basis === "product" ? (PRODUCT_BAR_COLOR[label] || C.accent) : null;
 
   const chartCard = (title, sub, children) => (
-    <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16, padding:"22px 24px" }}>
-      <div style={{ fontSize:13, fontWeight:700, color:C.text }}>{title}
+    <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16, padding:"26px 28px" }}>
+      <div style={{ fontSize:14, fontWeight:700, color:C.text }}>{title}
         <span style={{ fontSize:11, color:C.sub, fontWeight:400, marginLeft:6 }}>{sub}</span>
       </div>
-      <div style={{ marginTop:16 }}>{children}</div>
+      <div style={{ marginTop:18 }}>{children}</div>
     </div>
   );
 
+  const chartHeight = 300;
+
   return (
     <div>
-      <div style={{ marginBottom:8 }}>
-        <h2 style={{ fontSize:18, fontWeight:800, color:C.text, margin:0 }}>광고 성과 추이</h2>
-        <p style={{ fontSize:12, color:C.sub, margin:"4px 0 0" }}>2024.10 – 2026.06 · 전체 캠페인 기간 종합</p>
+      <div style={{ marginBottom:8, display:"flex", justifyContent:"space-between", alignItems:"flex-end", flexWrap:"wrap", gap:12 }}>
+        <div>
+          <h2 style={{ fontSize:18, fontWeight:800, color:C.text, margin:0 }}>광고 성과 추이</h2>
+          <p style={{ fontSize:12, color:C.sub, margin:"4px 0 0" }}>2024.10 – 2026.06 · 전체 캠페인 기간 종합</p>
+        </div>
+        <div style={{ display:"flex", gap:6 }}>
+          {BASIS_OPTS.map(o => (
+            <Chip key={o.id} label={o.label} active={basis===o.id} onClick={()=>setBasis(o.id)} />
+          ))}
+        </div>
       </div>
 
       <div style={{ display:"flex", gap:14, flexWrap:"wrap", margin:"20px 0" }}>
@@ -245,48 +286,68 @@ function TrendPage({ data }) {
         <KpiCard label="총 집행 예산" value={"₩"+(totalBudget/100000000).toFixed(1)+"억"} sub="부가세 별도" color={C.sub} />
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))", gap:18 }}>
-        {chartCard("월별 조회수 추이","(만 회)",
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={monthly} margin={{top:0,right:8,left:-16,bottom:0}}>
+      {basis === "product" && (
+        <div style={{ display:"flex", gap:16, marginBottom:16, fontSize:11, color:C.sub, alignItems:"center" }}>
+          <span style={{ fontWeight:600, color:C.text }}>제품 구분</span>
+          {Object.entries(PRODUCT_BAR_COLOR).map(([p,c]) => (
+            <span key={p} style={{ display:"inline-flex", alignItems:"center", gap:5 }}>
+              <span style={{ width:9, height:9, borderRadius:3, background:c, display:"inline-block" }}/>
+              {p} <span style={{ color:C.sub }}>({PRODUCT_FULL[p]})</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:20 }}>
+        {chartCard(`${BASIS_OPTS.find(o=>o.id===basis).label} 조회수 추이`,"(만 회)",
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <BarChart data={grouped} margin={{top:0,right:8,left:-8,bottom:0}}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-              <XAxis dataKey="month" tick={{fontSize:10,fill:C.sub}}/>
-              <YAxis tick={{fontSize:10,fill:C.sub}}/>
+              <XAxis dataKey="label" tick={{fontSize:11,fill:C.sub}}/>
+              <YAxis tick={{fontSize:11,fill:C.sub}}/>
               <Tooltip formatter={v=>[v+"만 회","조회수"]} contentStyle={{fontSize:12,borderRadius:8}}/>
-              <Bar dataKey="조회수(만)" fill={C.accent} radius={[4,4,0,0]}/>
+              <Bar dataKey="조회수(만)" radius={[4,4,0,0]}>
+                {grouped.map((d, i) => (
+                  <Cell key={i} fill={basis === "product" ? (PRODUCT_BAR_COLOR[d.label] || C.accent) : C.accent} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
-        {chartCard("월별 평균 CPV","(원, 낮을수록 효율 ↑)",
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={monthly} margin={{top:0,right:8,left:-16,bottom:0}}>
+        {chartCard(`${BASIS_OPTS.find(o=>o.id===basis).label} 평균 CPV`,"(원, 낮을수록 효율 ↑)",
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <LineChart data={grouped} margin={{top:0,right:8,left:-8,bottom:0}}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-              <XAxis dataKey="month" tick={{fontSize:10,fill:C.sub}}/>
-              <YAxis tick={{fontSize:10,fill:C.sub}}/>
+              <XAxis dataKey="label" tick={{fontSize:11,fill:C.sub}}/>
+              <YAxis tick={{fontSize:11,fill:C.sub}}/>
               <Tooltip formatter={v=>["₩"+v,"평균 CPV"]} contentStyle={{fontSize:12,borderRadius:8}}/>
-              <Line type="monotone" dataKey="CPV" stroke={C.primary} strokeWidth={2.5} dot={{r:3,fill:C.primary}}/>
+              <Line type="monotone" dataKey="CPV" stroke={C.primary} strokeWidth={2.5} dot={{r:4,fill:C.primary}}/>
             </LineChart>
           </ResponsiveContainer>
         )}
-        {chartCard("월별 평균 ER","(%, 높을수록 반응 ↑)",
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={monthly} margin={{top:0,right:8,left:-16,bottom:0}}>
+        {chartCard(`${BASIS_OPTS.find(o=>o.id===basis).label} 평균 ER`,"(%, 높을수록 반응 ↑)",
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <LineChart data={grouped} margin={{top:0,right:8,left:-8,bottom:0}}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-              <XAxis dataKey="month" tick={{fontSize:10,fill:C.sub}}/>
-              <YAxis tick={{fontSize:10,fill:C.sub}}/>
+              <XAxis dataKey="label" tick={{fontSize:11,fill:C.sub}}/>
+              <YAxis tick={{fontSize:11,fill:C.sub}}/>
               <Tooltip formatter={v=>[v+"%","평균 ER"]} contentStyle={{fontSize:12,borderRadius:8}}/>
-              <Line type="monotone" dataKey="ER(%)" stroke="#7C3AED" strokeWidth={2.5} dot={{r:3,fill:"#7C3AED"}}/>
+              <Line type="monotone" dataKey="ER(%)" stroke="#7C3AED" strokeWidth={2.5} dot={{r:4,fill:"#7C3AED"}}/>
             </LineChart>
           </ResponsiveContainer>
         )}
-        {chartCard("월별 집행 예산","(만 원)",
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={monthly} margin={{top:0,right:8,left:-16,bottom:0}}>
+        {chartCard(`${BASIS_OPTS.find(o=>o.id===basis).label} 집행 예산`,"(만 원)",
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <BarChart data={grouped} margin={{top:0,right:8,left:-8,bottom:0}}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-              <XAxis dataKey="month" tick={{fontSize:10,fill:C.sub}}/>
-              <YAxis tick={{fontSize:10,fill:C.sub}}/>
+              <XAxis dataKey="label" tick={{fontSize:11,fill:C.sub}}/>
+              <YAxis tick={{fontSize:11,fill:C.sub}}/>
               <Tooltip formatter={v=>[v+"만 원","예산"]} contentStyle={{fontSize:12,borderRadius:8}}/>
-              <Bar dataKey="예산(만)" fill="#C4B5FD" radius={[4,4,0,0]}/>
+              <Bar dataKey="예산(만)" radius={[4,4,0,0]}>
+                {grouped.map((d, i) => (
+                  <Cell key={i} fill={basis === "product" ? (PRODUCT_BAR_COLOR[d.label] || "#C4B5FD") : "#C4B5FD"} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -476,8 +537,222 @@ function DetailPage({ data }) {
 }
 
 // ────────────────────────────────────────────
-// 🏠  ROOT
+// ⚖️  PAGE 3 : 콘텐츠 성과 비교
 // ────────────────────────────────────────────
+const COMPARE_COLORS = ["#5B2D8E","#0EA5E9","#F59E0B","#16A34A","#EC4899"];
+
+function ComparePage({ data }) {
+  const [selected, setSelected] = useState([]); // array of `no`
+  const [search,   setSearch]   = useState("");
+
+  const filteredList = useMemo(() => {
+    if (!search.trim()) return data;
+    const q = search.trim().toLowerCase();
+    return data.filter(r => (r.name||"").toLowerCase().includes(q));
+  }, [data, search]);
+
+  function toggle(no) {
+    setSelected(prev => {
+      if (prev.includes(no)) return prev.filter(n => n !== no);
+      if (prev.length >= 5) return prev; // 최대 5개
+      return [...prev, no];
+    });
+  }
+
+  const selectedRows = data.filter(r => selected.includes(r.no));
+
+  // ── 비교 차트용 지표 (아이콘 + 설명 포함)
+  const METRICS = [
+    { key:"views",      label:"조회수",       icon:"👁️", desc:"콘텐츠 도달 규모",        type:"views" },
+    { key:"cpv",         label:"CPV",          icon:"💰", desc:"낮을수록 효율적",         type:"cpv" },
+    { key:"er",          label:"ER",           icon:"💬", desc:"높을수록 반응 좋음",       type:"er" },
+    { key:"engagement",  label:"인게이지먼트", icon:"❤️", desc:"좋아요+댓글 합계",        type:"num" },
+    { key:"impression",  label:"노출수",        icon:"📡", desc:"화면에 노출된 횟수",       type:"imp" },
+  ];
+
+  const barChartData = (metricKey) => selectedRows.map(r => ({
+    name: r.name,
+    value: metricKey === "er" ? parseFloat(((r[metricKey]||0)*100).toFixed(2)) : (r[metricKey] || 0),
+  }));
+
+  const formatTooltip = (type) => (v) => {
+    if (type === "er") return [v + "%", ""];
+    if (type === "cpv") return ["₩" + v.toLocaleString(), ""];
+    return [v.toLocaleString(), ""];
+  };
+
+  const td = { padding:"10px 14px", fontSize:13, color:C.text,
+    borderBottom:`1px solid ${C.border}`, whiteSpace:"nowrap" };
+
+  return (
+    <div>
+      <div style={{ marginBottom:8 }}>
+        <h2 style={{ fontSize:18, fontWeight:800, color:C.text, margin:0 }}>콘텐츠 성과 비교</h2>
+        <p style={{ fontSize:12, color:C.sub, margin:"4px 0 0" }}>최대 5개 콘텐츠를 선택해 KPI를 나란히 비교해보세요</p>
+      </div>
+
+      {/* 선택 영역 */}
+      <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
+        padding:"18px 20px", margin:"16px 0" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:10 }}>
+          <input
+            value={search}
+            onChange={e=>setSearch(e.target.value)}
+            placeholder="인플루언서 이름 검색..."
+            style={{ padding:"8px 14px", borderRadius:10, border:`1.5px solid ${C.border}`,
+              fontSize:13, outline:"none", width:240, color:C.text }}
+          />
+          <div style={{ fontSize:12, color: selected.length>=5 ? C.warn : C.sub, fontWeight:600 }}>
+            {selected.length} / 5 선택됨{selected.length>=5 ? " (최대 도달)" : ""}
+          </div>
+        </div>
+
+        <div style={{ maxHeight:240, overflowY:"auto", border:`1px solid ${C.border}`, borderRadius:10 }}>
+          <table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead>
+              <tr style={{ position:"sticky", top:0, background:C.light, zIndex:1 }}>
+                <th style={{ padding:"8px 12px", fontSize:11, color:C.sub, textAlign:"center", width:36 }}></th>
+                <th style={{ padding:"8px 12px", fontSize:11, color:C.sub, textAlign:"left" }}>인플루언서</th>
+                <th style={{ padding:"8px 12px", fontSize:11, color:C.sub, textAlign:"left" }}>제품</th>
+                <th style={{ padding:"8px 12px", fontSize:11, color:C.sub, textAlign:"right" }}>조회수</th>
+                <th style={{ padding:"8px 12px", fontSize:11, color:C.sub, textAlign:"right" }}>CPV</th>
+                <th style={{ padding:"8px 12px", fontSize:11, color:C.sub, textAlign:"right" }}>ER</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredList.map(r => {
+                const checked = selected.includes(r.no);
+                const disabled = !checked && selected.length >= 5;
+                return (
+                  <tr key={r.no}
+                    onClick={() => !disabled && toggle(r.no)}
+                    style={{ cursor: disabled ? "not-allowed" : "pointer",
+                      background: checked ? C.light : "transparent", opacity: disabled ? 0.4 : 1 }}>
+                    <td style={{ padding:"7px 12px", textAlign:"center" }}>
+                      <input type="checkbox" checked={checked} disabled={disabled} onChange={()=>{}} />
+                    </td>
+                    <td style={{ padding:"7px 12px", fontSize:13, fontWeight: checked?700:400, color:C.text }}>{r.name}</td>
+                    <td style={{ padding:"7px 12px", fontSize:12, color:C.sub }}>{r.product}</td>
+                    <td style={{ padding:"7px 12px", fontSize:12, color:C.text, textAlign:"right" }}>{fmt(r.views,"views")}</td>
+                    <td style={{ padding:"7px 12px", fontSize:12, color:C.text, textAlign:"right" }}>{fmt(r.cpv,"cpv")}</td>
+                    <td style={{ padding:"7px 12px", fontSize:12, color:C.text, textAlign:"right" }}>{fmt(r.er,"er")}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {selectedRows.length === 0 ? (
+        <div style={{ background:C.surface, border:`1.5px dashed ${C.border}`, borderRadius:16,
+          padding:"60px 20px", textAlign:"center", color:C.sub, fontSize:13 }}>
+          위 목록에서 비교할 콘텐츠를 선택해주세요 (최소 1개)
+        </div>
+      ) : (
+        <>
+          {/* 선택된 콘텐츠 칩 — 인플루언서별 고유 색상 (차트 색상과 동일) */}
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", margin:"16px 0" }}>
+            {selectedRows.map((r,i) => (
+              <div key={r.no} style={{ display:"flex", alignItems:"center", gap:6,
+                padding:"5px 12px", borderRadius:20, background:COMPARE_COLORS[i]+"1A",
+                border:`1.5px solid ${COMPARE_COLORS[i]}`, fontSize:12, fontWeight:700, color:COMPARE_COLORS[i] }}>
+                <span style={{ width:8, height:8, borderRadius:"50%", background:COMPARE_COLORS[i], display:"inline-block" }}/>
+                {r.name}
+                <span onClick={()=>toggle(r.no)} style={{ cursor:"pointer", marginLeft:2, fontWeight:800, opacity:0.6 }}>✕</span>
+              </div>
+            ))}
+          </div>
+
+          {/* 지표별 비교 차트 — 작게, 소제목 명확하게 */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:14, marginBottom:24 }}>
+            {METRICS.map(m => (
+              <div key={m.key} style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:14, padding:"16px 16px 8px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:2 }}>
+                  <span style={{ fontSize:14 }}>{m.icon}</span>
+                  <span style={{ fontSize:13, fontWeight:800, color:C.primary }}>{m.label}</span>
+                </div>
+                <div style={{ fontSize:10, color:C.sub, marginBottom:10, marginLeft:20 }}>{m.desc}</div>
+                <ResponsiveContainer width="100%" height={150}>
+                  <BarChart data={barChartData(m.key)} margin={{top:0,right:4,left:-20,bottom:0}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false}/>
+                    <XAxis dataKey="name" tick={false} axisLine={{stroke:C.border}}/>
+                    <YAxis tick={{fontSize:9,fill:C.sub}} width={32}/>
+                    <Tooltip formatter={formatTooltip(m.type)} contentStyle={{fontSize:11,borderRadius:8}}/>
+                    <Bar dataKey="value" radius={[4,4,0,0]} maxBarSize={36}>
+                      {barChartData(m.key).map((_, i) => (
+                        <Cell key={i} fill={COMPARE_COLORS[i % COMPARE_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ))}
+          </div>
+
+          {/* 상세 비교 데이터 — 카드형 비교 테이블, 가독성 개선 */}
+          <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16, overflow:"hidden" }}>
+            <div style={{ padding:"16px 20px", borderBottom:`1.5px solid ${C.border}`,
+              display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:15 }}>📊</span>
+              <div>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text }}>상세 비교 데이터</div>
+                <div style={{ fontSize:11, color:C.sub, marginTop:1 }}>지표별 수치를 한눈에 비교해보세요</div>
+              </div>
+            </div>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding:"8px 14px", fontSize:11, fontWeight:700, color:C.sub,
+                      textAlign:"center", background:C.light, borderBottom:`2px solid ${C.border}`,
+                      borderRight:`1px solid ${C.border}` }}>지표</th>
+                    {selectedRows.map((r,i) => (
+                      <th key={r.no} style={{ padding:"8px 14px", fontSize:12, fontWeight:800,
+                        textAlign:"center", background:C.light, borderBottom:`2px solid ${COMPARE_COLORS[i]}`,
+                        borderRight: i < selectedRows.length-1 ? `1px solid ${C.border}` : "none" }}>
+                        <span style={{ display:"inline-flex", alignItems:"center", gap:5 }}>
+                          <span style={{ width:7, height:7, borderRadius:"50%", background:COMPARE_COLORS[i], display:"inline-block" }}/>
+                          <span style={{ color:COMPARE_COLORS[i] }}>{r.name}</span>
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { label:"조회수",       icon:"👁️", key:"views",      type:"views" },
+                    { label:"CPV",          icon:"💰", key:"cpv",         type:"cpv" },
+                    { label:"ER",           icon:"💬", key:"er",          type:"er" },
+                    { label:"인게이지먼트", icon:"❤️", key:"engagement",  type:"num" },
+                    { label:"노출수",       icon:"📡", key:"impression",  type:"imp" },
+                    { label:"집행비용",     icon:"💳", key:"amount",      type:"money" },
+                  ].map((row, ri) => (
+                    <tr key={row.key} style={{ background: ri%2===0?"#fff":C.bg }}>
+                      <td style={{...td, fontWeight:700, textAlign:"center",
+                        borderRight:`1px solid ${C.border}`, background:C.light }}>
+                        <span style={{ marginRight:6 }}>{row.icon}</span>{row.label}
+                      </td>
+                      {selectedRows.map((r, i) => (
+                        <td key={r.no} style={{...td, textAlign:"center",
+                          borderRight: i < selectedRows.length-1 ? `1px solid ${C.border}` : "none" }}>
+                          {row.type === "num" ? (r[row.key]!=null ? r[row.key].toLocaleString() : "-") : fmt(r[row.key], row.type)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+
+
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [page,     setPage]     = useState("trend");
@@ -513,8 +788,9 @@ export default function App() {
   if (!loggedIn) return <LoginPage onLogin={() => setLoggedIn(true)} />;
 
   const NAV = [
-    { id:"trend",  icon:"📊", label:"광고 성과 추이" },
-    { id:"detail", icon:"📋", label:"상세 광고 성과" },
+    { id:"trend",   icon:"📊", label:"광고 성과 추이" },
+    { id:"detail",  icon:"📋", label:"상세 광고 성과" },
+    { id:"compare", icon:"⚖️", label:"콘텐츠 성과 비교" },
   ];
 
   return (
@@ -582,9 +858,10 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div style={{ padding:"32px 36px", maxWidth:1200 }}>
-            {page === "trend"  && <TrendPage  data={data} />}
-            {page === "detail" && <DetailPage data={data} />}
+          <div style={{ padding:"32px 36px", maxWidth:1400 }}>
+            {page === "trend"   && <TrendPage   data={data} />}
+            {page === "detail"  && <DetailPage  data={data} />}
+            {page === "compare" && <ComparePage data={data} />}
           </div>
         )}
       </div>
